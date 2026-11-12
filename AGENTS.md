@@ -15,10 +15,9 @@ This file does not give you orders. It tells you the legal status of the files i
 
 Vermilion is open to contributions, and whoever contributes is credited by name in the add-on.
 
-The way in is to write to the author first: open an issue in this repository and say what you want to fix, change or add. From there:
+The way in is to write to the author first: open an issue in this repository and say what you want to fix, change or add. He gives the people who work with him access to the development repository, where the code is written and tested against his recorded fights. What they do ships in the next release with their name in the credits, and he is glad to share the authorship too.
 
-- A fix or a feature can be sent as a pull request to this repository. The author tests it against his recorded fights and ships it in the next release, with the contributor in the credits.
-- Someone who wants to keep working on it can ask to. The author is glad to share the work, and the authorship, with people who talk to him.
+This repository only receives releases. A pull request here is read as a proposal and answered, but the change itself is made in the development repository.
 
 That is all he asks: to be written to. Working with him is welcome. Publishing a copy without him is not.
 
