@@ -1,0 +1,138 @@
+name: Verify
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  layout:
+    name: The repository holds only what is distributed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Only the expected entries at the root
+        run: |
+          bad=0
+          for entry in $(ls -A); do
+            case "$entry" in
+              .git|.github|.gitattributes|docs|Vermilion|LICENSE|README.md|AGENTS.md|CLAUDE.md) ;;
+              *) echo "::error::unexpected entry at the root: $entry"; bad=1 ;;
+            esac
+          done
+          exit $bad
+
+      - name: The licence is the Vermilion License
+        run: |
+          if ! head -1 LICENSE | grep -q '^Vermilion License, version '; then
+            echo "::error::LICENSE at the root is not the Vermilion License"
+            exit 1
+          fi
+
+      - name: The add-on folder is what the game loads
+        run: |
+          if [ ! -d Vermilion ]; then
+            echo "::notice::no add-on folder yet, nothing to check"
+            exit 0
+          fi
+          bad=0
+          M=Vermilion/Vermilion.txt
+          if [ ! -f "$M" ]; then
+            echo "::error::$M is missing"
+            exit 1
+          fi
+          if [ "$(head -c3 "$M" | od -An -tx1 | tr -d ' ')" = "efbbbf" ]; then
+            echo "::error::$M has a UTF-8 BOM"
+            bad=1
+          fi
+          if ! LC_ALL=C awk '{ sub(/\r$/, ""); if (length($0) > 301) { printf "::error::%s line %d is %d bytes\n", FILENAME, NR, length($0); bad=1 } } END { exit bad }' "$M"; then
+            bad=1
+          fi
+          API=$(grep -E '^## APIVersion:' "$M" | sed -E 's/^## APIVersion:[[:space:]]*//' | tr -d '\r' | wc -w)
+          if [ "$API" -lt 1 ] || [ "$API" -gt 2 ]; then
+            echo "::error::APIVersion has $API values, it takes 1 or 2"
+            bad=1
+          fi
+          if ! grep -q '^# License: Vermilion License' "$M"; then
+            echo "::error::the manifest does not name the Vermilion License"
+            bad=1
+          fi
+          if ! cmp -s LICENSE Vermilion/LICENSE; then
+            echo "::error::Vermilion/LICENSE is missing or differs from LICENSE at the root"
+            bad=1
+          fi
+          hidden=$(find Vermilion \( -name ".*" -o -name "Thumbs.db" -o -name "desktop.ini" -o -name "__MACOSX" \) -print)
+          if [ -n "$hidden" ]; then
+            echo "::error::hidden or junk files in the add-on folder: $hidden"
+            bad=1
+          fi
+          for tool in dev test qa docs specs; do
+            if [ -e "Vermilion/$tool" ]; then
+              echo "::error::Vermilion/$tool does not belong in the add-on folder"
+              bad=1
+            fi
+          done
+          while IFS= read -r line; do
+            line="${line%$'\r'}"
+            case "$line" in
+              ""|"#"*|";"*|*'$('*) continue ;;
+            esac
+            if [ ! -f "Vermilion/$line" ]; then
+              echo "::error::the manifest lists a file that is not here: $line"
+              bad=1
+            fi
+          done < "$M"
+          for ref in $(grep -rhoE 'Vermilion/assets/[A-Za-z0-9_./-]+\.dds' Vermilion --include=*.lua --include=*.xml | sort -u); do
+            if [ ! -f "$ref" ]; then
+              echo "::error::a texture the code names is not here: $ref"
+              bad=1
+            fi
+          done
+          echo "Checked $(find Vermilion -type f | wc -l) files of version $(grep -E '^## Version:' "$M" | sed -E 's/^## Version:[[:space:]]*//' | tr -d '\r')."
+          exit $bad
+
+  release:
+    name: The repository is the released zip
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Compare the add-on folder with the zip of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG#v}"
+          ZIP="Vermilion-$VERSION.zip"
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ZIP" --dir "$RUNNER_TEMP/release"
+          unzip -q "$RUNNER_TEMP/release/$ZIP" -d "$RUNNER_TEMP/release/unzipped"
+          top=$(ls -A "$RUNNER_TEMP/release/unzipped")
+          if [ "$top" != "Vermilion" ]; then
+            echo "::error::the zip must hold one folder named Vermilion, it holds: $top"
+            exit 1
+          fi
+          if ! diff -r "$RUNNER_TEMP/release/unzipped/Vermilion" Vermilion; then
+            echo "::error::the add-on folder of this tag differs from $ZIP"
+            exit 1
+          fi
+          M=$(grep -E '^## Version:' Vermilion/Vermilion.txt | sed -E 's/^## Version:[[:space:]]*//' | tr -d '\r')
+          if [ "$M" != "$VERSION" ]; then
+            echo "::error::the manifest says $M and the tag says $VERSION"
+            exit 1
+          fi
+          echo "Vermilion/ at $TAG equals $ZIP: $(find Vermilion -type f | wc -l) files."
